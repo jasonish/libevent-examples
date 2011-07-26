@@ -1,4 +1,4 @@
-CFLAGS =	-I$(LIBEVENT) -Wall
+CFLAGS =	-I$(LIBEVENT)/include -Wall
 
 LIBS =		$(LIBEVENT)/.libs/libevent.a -lrt
 

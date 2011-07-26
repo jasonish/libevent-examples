@@ -50,17 +50,23 @@
 #include <errno.h>
 #include <err.h>
 
-/*
- * On some systems (OpenBSD/NetBSD/FreeBSD) you could include
- * <sys/queue.h>, but for portability we'll include the local copy.
- */
+/* On some systems (OpenBSD/NetBSD/FreeBSD) you could include
+ * <sys/queue.h>, but for portability we'll include the local copy. */
 #include "queue.h"
 
 /* Libevent. */
-#include <event.h>
+#include <event2/event.h>
+#include <event2/event_struct.h>
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
 
 /* Port to listen on. */
 #define SERVER_PORT 5555
+
+/* The libevent event base.  In libevent 1 you didn't need to worry
+ * about this for simple programs, but its used more in the libevent 2
+ * API. */
+static struct event_base *evbase;
 
 /**
  * A struct for client specific data.
@@ -137,15 +143,6 @@ buffered_on_read(struct bufferevent *bev, void *arg)
 }
 
 /**
- * Called by libevent when the write buffer reaches 0.  We only
- * provide this because libevent expects it, but we don't use it.
- */
-void
-buffered_on_write(struct bufferevent *bev, void *arg)
-{
-}
-
-/**
  * Called by libevent when there is an error on the underlying socket
  * descriptor.
  */
@@ -154,7 +151,7 @@ buffered_on_error(struct bufferevent *bev, short what, void *arg)
 {
 	struct client *client = (struct client *)arg;
 
-	if (what & EVBUFFER_EOF) {
+	if (what & BEV_EVENT_EOF) {
 		/* Client disconnected, remove the read event and the
 		 * free the client structure. */
 		printf("Client disconnected.\n");
@@ -198,32 +195,10 @@ on_accept(int fd, short ev, void *arg)
 	if (client == NULL)
 		err(1, "malloc failed");
 	client->fd = client_fd;
-	
-	/* Create the buffered event.
-	 *
-	 * The first argument is the file descriptor that will trigger
-	 * the events, in this case the clients socket.
-	 *
-	 * The second argument is the callback that will be called
-	 * when data has been read from the socket and is available to
-	 * the application.
-	 *
-	 * The third argument is a callback to a function that will be
-	 * called when the write buffer has reached a low watermark.
-	 * That usually means that when the write buffer is 0 length,
-	 * this callback will be called.  It must be defined, but you
-	 * don't actually have to do anything in this callback.
-	 *
-	 * The fourth argument is a callback that will be called when
-	 * there is a socket error.  This is where you will detect
-	 * that the client disconnected or other socket errors.
-	 *
-	 * The fifth and final argument is to store an argument in
-	 * that will be passed to the callbacks.  We store the client
-	 * object here.
-	 */
-	client->buf_ev = bufferevent_new(client_fd, buffered_on_read,
-	    buffered_on_write, buffered_on_error, client);
+
+	client->buf_ev = bufferevent_socket_new(evbase, client_fd, 0);
+	bufferevent_setcb(client->buf_ev, buffered_on_read, NULL,
+	    buffered_on_error, client);
 
 	/* We have to enable it before our callbacks will be
 	 * called. */
@@ -245,7 +220,7 @@ main(int argc, char **argv)
 	int reuseaddr_on;
 
 	/* Initialize libevent. */
-	event_init();
+        evbase = event_base_new();
 
 	/* Initialize the tailq. */
 	TAILQ_INIT(&client_tailq_head);
@@ -274,11 +249,12 @@ main(int argc, char **argv)
 
 	/* We now have a listening socket, we create a read event to
 	 * be notified when a client connects. */
-	event_set(&ev_accept, listen_fd, EV_READ|EV_PERSIST, on_accept, NULL);
+        event_assign(&ev_accept, evbase, listen_fd, EV_READ|EV_PERSIST, 
+	    on_accept, NULL);
 	event_add(&ev_accept, NULL);
 
 	/* Start the event loop. */
-	event_dispatch();
+	event_base_dispatch(evbase);
 
 	return 0;
 }
