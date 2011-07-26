@@ -1,6 +1,8 @@
 A simple chat server using libevent.
 -------------------------------------------------------------------------------
 
+Requires libevent 2.0+.
+
 First you must download and build libevent, you do not need to install
 it.  
 
